@@ -76,9 +76,6 @@ public class TroubleshootServlet extends AbstractWebConsolePlugin {
     public static final String TITLE = "Troubleshoot";
     public static final String CATEGORY = "OSGi";
 
-    // TODO: copy css and js, use @Property WebConsoleConstants.PLUGIN_CSS_REFERENCES
-    //private static final String CSS[] = { "/res/ui/bundles.css" };
-
     @Reference
     private PackageAdmin packageAdmin;
 
@@ -122,7 +119,7 @@ public class TroubleshootServlet extends AbstractWebConsolePlugin {
         out.println("<br>");
         out.println("<br>");
 
-        handleServices(req, res, bundles);
+        handleServices(req, res);
     }
 
     // -----------------------------------< bundles >----------
@@ -130,7 +127,7 @@ public class TroubleshootServlet extends AbstractWebConsolePlugin {
     private void handleBundles(HttpServletRequest req, HttpServletResponse res, Bundle[] bundles) throws IOException {
         PrintWriter out = res.getWriter();
 
-        final List problematicBundles = getProblematicBundles(bundles);
+        final List<Bundle> problematicBundles = getProblematicBundles(bundles);
 
         if (problematicBundles.isEmpty()) {
             out.println("All bundles ok.");
@@ -140,24 +137,22 @@ public class TroubleshootServlet extends AbstractWebConsolePlugin {
         out.println("<b>Inactive Bundles</b>");
         out.println("<div>");
 
-        final String bundlesUrl = (String) req.getAttribute(WebConsoleConstants.ATTR_APP_ROOT) + "/bundles";
+        final String bundlesUrl = req.getAttribute(WebConsoleConstants.ATTR_APP_ROOT) + "/bundles";
 
-        for (int i = 0; i < problematicBundles.size(); i++) {
-            Bundle bundle = (Bundle) problematicBundles.get(i);
-
+        for (Bundle bundle : problematicBundles) {
             out.println(getDetailLink(bundle, bundlesUrl));
             out.println(" ");
             out.println(getStatusString(bundle));
             out.println("<br>");
 
-            ExportedPackage[] allExports = packageAdmin.getExportedPackages( (Bundle) null );
+            ExportedPackage[] allExports = packageAdmin.getExportedPackages((Bundle) null);
             // multimap - same package can be exported in multiple versions
-            Map globalExportMap = new HashMap();
+            Map<String, List<ExportedPackage>> globalExportMap = new HashMap<String, List<ExportedPackage>>();
             for (int j = 0; j < allExports.length; j++) {
                 ExportedPackage exportedPackage = allExports[j];
-                List values = (List) globalExportMap.get(exportedPackage.getName());
+                List<ExportedPackage> values = globalExportMap.get(exportedPackage.getName());
                 if (values == null) {
-                    values = new ArrayList();
+                    values = new ArrayList<ExportedPackage>();
                     globalExportMap.put(exportedPackage.getName(), values);
                 }
                 values.add(exportedPackage);
@@ -170,13 +165,11 @@ public class TroubleshootServlet extends AbstractWebConsolePlugin {
             // - something else exports it, but in another (older) version
             // - nothing exports it
 
-            String importHeader = (String) dict.get( Constants.IMPORT_PACKAGE );
+            String importHeader = (String) dict.get(Constants.IMPORT_PACKAGE);
             Clause[] imports = Parser.parseHeader(importHeader);
             if (imports != null) {
 
-                for (int k = 0; k < imports.length; k++) {
-                    Clause importPkg = imports[k];
-
+                for (Clause importPkg : imports) {
                     if (isOptional(importPkg)) {
                         continue;
                     }
@@ -185,11 +178,10 @@ public class TroubleshootServlet extends AbstractWebConsolePlugin {
                     }
 
                     String name = importPkg.getName();
-                    List matchingExports = (List) globalExportMap.get(name);
+                    List<ExportedPackage> matchingExports = globalExportMap.get(name);
                     if (matchingExports != null) {
                         boolean satisfied = false;
-                        for (int j = 0; j < matchingExports.size(); j++) {
-                            ExportedPackage exported = (ExportedPackage) matchingExports.get(j);
+                        for (ExportedPackage exported : matchingExports) {
                             if (isSatisfied(importPkg, exported)) {
                                 satisfied = true;
 
@@ -218,8 +210,7 @@ public class TroubleshootServlet extends AbstractWebConsolePlugin {
                             }
                             // common case
                             if (matchingExports.size() == 1) {
-                                for (int j = 0; j < matchingExports.size(); j++) {
-                                    ExportedPackage export = (ExportedPackage) matchingExports.get(j);
+                                for (ExportedPackage export : matchingExports) {
                                     Version exportVersion = export.getVersion();
                                     String versionAttr = importPkg.getAttribute(Constants.VERSION_ATTRIBUTE);
                                     VersionRange importRange = new VersionRange(versionAttr);
@@ -300,10 +291,9 @@ public class TroubleshootServlet extends AbstractWebConsolePlugin {
         return Constants.RESOLUTION_OPTIONAL.equals(directive);
     }
 
-    private List getProblematicBundles(Bundle[] bundles) {
-        List problemBundles = new ArrayList();
-        for (int i = 0; i < bundles.length; i++) {
-            Bundle bundle = bundles[i];
+    private List<Bundle> getProblematicBundles(Bundle[] bundles) {
+        List<Bundle> problemBundles = new ArrayList<Bundle>();
+        for (Bundle bundle : bundles) {
             if (isInactive(bundle)) {
                 problemBundles.add(bundle);
             }
@@ -358,10 +348,8 @@ public class TroubleshootServlet extends AbstractWebConsolePlugin {
     private String getStatusLine(final Bundle[] bundles)
     {
         int active = 0, installed = 0, resolved = 0, fragments = 0;
-        for ( int i = 0; i < bundles.length; i++ )
-        {
-            switch ( bundles[i].getState() )
-            {
+        for (Bundle bundle : bundles) {
+            switch (bundle.getState()) {
                 case Bundle.ACTIVE:
                     active++;
                     break;
@@ -369,12 +357,9 @@ public class TroubleshootServlet extends AbstractWebConsolePlugin {
                     installed++;
                     break;
                 case Bundle.RESOLVED:
-                    if ( isFragmentBundle( bundles[i] ) )
-                    {
+                    if (isFragmentBundle(bundle)) {
                         fragments++;
-                    }
-                    else
-                    {
+                    } else {
                         resolved++;
                     }
                     break;
@@ -430,15 +415,14 @@ public class TroubleshootServlet extends AbstractWebConsolePlugin {
 
     // -----------------------------------< services / components >----------
 
-    // this is DS/SCR specific for now
-    private void handleServices(HttpServletRequest req, HttpServletResponse res, Bundle[] bundles) throws IOException {
+    private void handleServices(HttpServletRequest req, HttpServletResponse res) throws IOException {
         PrintWriter out = res.getWriter();
 
         out.println("<b>Inactive Components</b>");
         out.println("<div>");
 
-        // service interface (String) -> components (List<ComponentDescriptionDTO>)
-        Map serviceImpls = new HashMap();
+        // service interface name -> components implementing it
+        Map<String, List<ComponentDescriptionDTO>> serviceImpls = new HashMap<String, List<ComponentDescriptionDTO>>();
 
         Iterator allComponentDescriptions = scr.getComponentDescriptionDTOs(new Bundle[0]).iterator();
         while (allComponentDescriptions.hasNext()) {
@@ -449,9 +433,9 @@ public class TroubleshootServlet extends AbstractWebConsolePlugin {
             }
         }
 
-        // service interface (String)
-        Map missingServices = new HashMap();
-        Set servicesAlreadyChecked = new HashSet();
+        // service interface name -> components blocked by it
+        Map<String, List<ComponentDescriptionDTO>> missingServices = new HashMap<String, List<ComponentDescriptionDTO>>();
+        Set<String> servicesAlreadyChecked = new HashSet<String>();
 
         allComponentDescriptions = scr.getComponentDescriptionDTOs(new Bundle[0]).iterator();
         while (allComponentDescriptions.hasNext()) {
@@ -461,19 +445,15 @@ public class TroubleshootServlet extends AbstractWebConsolePlugin {
         }
 
         // sort by most blocked components first
-        List list = new ArrayList(missingServices.entrySet());
-        Collections.sort(list, new Comparator() {
-            public int compare(Object o1, Object o2) {
-                List components1 = (List) ((Map.Entry)o1).getValue();
-                List components2 = (List) ((Map.Entry)o2).getValue();
-                return components2.size() - components1.size();
+        List<Map.Entry<String, List<ComponentDescriptionDTO>>> list = new ArrayList<Map.Entry<String, List<ComponentDescriptionDTO>>>(missingServices.entrySet());
+        Collections.sort(list, new Comparator<Map.Entry<String, List<ComponentDescriptionDTO>>>() {
+            public int compare(Map.Entry<String, List<ComponentDescriptionDTO>> o1, Map.Entry<String, List<ComponentDescriptionDTO>> o2) {
+                return o2.getValue().size() - o1.getValue().size();
             }
         });
 
-        Iterator iter = list.iterator();
-        while (iter.hasNext()) {
-            Map.Entry entry = (Map.Entry) iter.next();
-            List dependents = (List) entry.getValue();
+        for (Map.Entry<String, List<ComponentDescriptionDTO>> entry : list) {
+            List<ComponentDescriptionDTO> dependents = entry.getValue();
             out.println("<div class='toggle'>");
             out.println("<div class='ui-icon ui-icon-triangle-1-e' style='float: left'></div>");
             out.print("missing service: ");
@@ -483,8 +463,7 @@ public class TroubleshootServlet extends AbstractWebConsolePlugin {
             out.println(" other components");
             out.println("<br>");
             out.println("<div class='toggle-content' style='display:none'>");
-            for (int i = 0; i < dependents.size(); i++) {
-                ComponentDescriptionDTO dependent = (ComponentDescriptionDTO) dependents.get(i);
+            for (ComponentDescriptionDTO dependent : dependents) {
                 out.print("<p style='margin-left:30px'>");
                 out.print(dependent.name);
                 out.println("</p>");
@@ -500,9 +479,9 @@ public class TroubleshootServlet extends AbstractWebConsolePlugin {
     private void collectMissingServices(
         ComponentDescriptionDTO description,
         ServiceComponentRuntime scr,
-        Map serviceImpls,
-        Map missingServices,
-        Set servicesAlreadyChecked
+        Map<String, List<ComponentDescriptionDTO>> serviceImpls,
+        Map<String, List<ComponentDescriptionDTO>> missingServices,
+        Set<String> servicesAlreadyChecked
     ) {
         Iterator components = scr.getComponentConfigurationDTOs(description).iterator();
 
@@ -515,21 +494,21 @@ public class TroubleshootServlet extends AbstractWebConsolePlugin {
                 SatisfiedReferenceDTO satisfiedRef = getSatisfiedReferenceDTO(component, reference.name);
                 if (satisfiedRef == null) {
                     String serviceInterface = reference.interfaceName;
-                        servicesAlreadyChecked.add(serviceInterface);
+                    servicesAlreadyChecked.add(serviceInterface);
 
-                        List impls = (List) serviceImpls.get(serviceInterface);
-                        if (impls == null) {
-                            addToMultiMap(missingServices, serviceInterface, description);
-                        }
+                    List impls = (List) serviceImpls.get(serviceInterface);
+                    if (impls == null) {
+                        addToMultiMap(missingServices, serviceInterface, description);
+                    }
                 }
             }
         }
     }
 
-    private void addToMultiMap(Map map, Object key, Object value) {
-        List components = (List) map.get(key);
+    private <K, V> void addToMultiMap(Map<K, List<V>> map, K key, V value) {
+        List<V> components = map.get(key);
         if (components == null) {
-            components = new ArrayList();
+            components = new ArrayList<V>();
             map.put(key, components);
         }
         components.add(value);
