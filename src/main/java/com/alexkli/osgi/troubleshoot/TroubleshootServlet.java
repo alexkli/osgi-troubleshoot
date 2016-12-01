@@ -37,7 +37,9 @@ import javax.servlet.ServletException;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 
+import org.apache.felix.scr.annotations.Activate;
 import org.apache.felix.scr.annotations.Component;
+import org.apache.felix.scr.annotations.Deactivate;
 import org.apache.felix.scr.annotations.Properties;
 import org.apache.felix.scr.annotations.Property;
 import org.apache.felix.scr.annotations.Reference;
@@ -45,11 +47,13 @@ import org.apache.felix.scr.annotations.Service;
 import org.apache.felix.webconsole.AbstractWebConsolePlugin;
 import org.apache.felix.webconsole.WebConsoleConstants;
 import org.osgi.framework.Bundle;
+import org.osgi.framework.BundleContext;
 import org.osgi.framework.Constants;
 import org.osgi.framework.InvalidSyntaxException;
 import org.osgi.framework.ServiceReference;
 import org.osgi.framework.Version;
 import org.osgi.framework.VersionRange;
+import org.osgi.service.component.ComponentContext;
 import org.osgi.service.component.runtime.ServiceComponentRuntime;
 import org.osgi.service.component.runtime.dto.ComponentConfigurationDTO;
 import org.osgi.service.component.runtime.dto.ComponentDescriptionDTO;
@@ -64,7 +68,7 @@ import com.alexkli.osgi.troubleshoot.utils.Parser;
 /**
  * Web console view that helps troubleshooting unresolved bundles and co.
  */
-@Component
+@Component(immediate = true)
 @Service(value = { Servlet.class })
 @Properties({
     @Property(name=Constants.SERVICE_DESCRIPTION,       value="Web Console OSGi Troubleshoot Plugin"),
@@ -84,6 +88,23 @@ public class TroubleshootServlet extends AbstractWebConsolePlugin {
 
     @Reference
     private ServiceComponentRuntime scr;
+
+    private ServiceOriginTracker serviceOriginTracker;
+
+    @Activate
+    public void componentActivate(ComponentContext ctx) {
+        BundleContext bundleContext = ctx.getBundleContext();
+        activate(bundleContext);
+        serviceOriginTracker = new ServiceOriginTracker(bundleContext);
+    }
+
+    @Deactivate
+    public void componentDeactivate() {
+        serviceOriginTracker.stop(getBundleContext());
+        serviceOriginTracker = null;
+
+        deactivate();
+    }
 
     @Override
     public String getLabel() {
@@ -490,6 +511,10 @@ public class TroubleshootServlet extends AbstractWebConsolePlugin {
         }
 
         out.println("</div>");
+
+        out.println("<b>Origins</b>");
+
+
     }
 
     private String getServiceStatusLine(Collection<ComponentDescriptionDTO> allComponents,
