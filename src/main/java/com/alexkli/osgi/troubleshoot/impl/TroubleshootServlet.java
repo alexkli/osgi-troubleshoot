@@ -168,6 +168,13 @@ public class TroubleshootServlet extends AbstractWebConsolePlugin {
             out.println(getStatusString(bundle));
             out.println("<br>");
 
+            if (bundle.getState() == Bundle.STOPPING || bundle.getState() == Bundle.STARTING) {
+                out.print("<i>If the bundle is ");
+                out.print(bundle.getState() == Bundle.STOPPING ? "stopping" : "starting");
+                out.println(" forever, there might be a deadlock." +
+                    " Check the <a href='status-jstack-threaddump'>thread dumps</a>.</i><br/>");
+            }
+
             ExportedPackage[] allExports = packageAdmin.getExportedPackages((Bundle) null);
             // multimap - same package can be exported in multiple versions
             Map<String, List<ExportedPackage>> globalExportMap = new HashMap<String, List<ExportedPackage>>();
