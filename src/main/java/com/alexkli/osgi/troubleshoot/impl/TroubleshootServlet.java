@@ -497,6 +497,13 @@ public class TroubleshootServlet extends AbstractWebConsolePlugin {
 
         for (Map.Entry<String, List<ComponentDescriptionDTO>> entry : list) {
             List<ComponentDescriptionDTO> dependents = entry.getValue();
+            // sort alphabetically by component name
+            Collections.sort(dependents, new Comparator<ComponentDescriptionDTO>() {
+                @Override
+                public int compare(ComponentDescriptionDTO o1, ComponentDescriptionDTO o2) {
+                    return o1.name.compareTo(o2.name);
+                }
+            });
             out.println("<div class='toggle'>");
             out.println("<div class='ui-icon ui-icon-triangle-1-e' style='float: left'></div>");
             out.print("missing service: ");
