@@ -17,7 +17,7 @@
  * under the License.
  **************************************************************************/
 
-package com.alexkli.osgi.troubleshoot;
+package com.alexkli.osgi.troubleshoot.impl;
 
 import java.io.IOException;
 import java.io.PrintWriter;
@@ -58,8 +58,8 @@ import org.osgi.service.component.runtime.dto.SatisfiedReferenceDTO;
 import org.osgi.service.packageadmin.ExportedPackage;
 import org.osgi.service.packageadmin.PackageAdmin;
 
-import com.alexkli.osgi.troubleshoot.utils.Clause;
-import com.alexkli.osgi.troubleshoot.utils.Parser;
+import com.alexkli.osgi.troubleshoot.impl.utils.Clause;
+import com.alexkli.osgi.troubleshoot.impl.utils.Parser;
 
 /**
  * Web console view that helps troubleshooting unresolved bundles and co.
