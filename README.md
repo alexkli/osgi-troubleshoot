@@ -1,2 +1,2 @@
-# webconsole-osgi-troubleshooter
-Apache Felix Webconsole Plugin for Troubleshooting OSGi bundles and services
+# osgi-troubleshoot
+Apache Felix Webconsole Plugin for troubleshooting OSGi bundles and services
