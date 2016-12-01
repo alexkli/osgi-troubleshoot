@@ -22,6 +22,7 @@ package com.alexkli.osgi.troubleshoot;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.Dictionary;
@@ -45,6 +46,8 @@ import org.apache.felix.webconsole.AbstractWebConsolePlugin;
 import org.apache.felix.webconsole.WebConsoleConstants;
 import org.osgi.framework.Bundle;
 import org.osgi.framework.Constants;
+import org.osgi.framework.InvalidSyntaxException;
+import org.osgi.framework.ServiceReference;
 import org.osgi.framework.Version;
 import org.osgi.framework.VersionRange;
 import org.osgi.service.component.runtime.ServiceComponentRuntime;
@@ -109,10 +112,6 @@ public class TroubleshootServlet extends AbstractWebConsolePlugin {
 
         final Bundle[] bundles = getBundleContext().getBundles();
 
-        out.println("<p class=\"statline ui-state-highlight\">");
-        out.println(getStatusLine(bundles));
-        out.println("</p>");
-
         handleBundles(req, res, bundles);
 
         out.println("<br>");
@@ -126,6 +125,10 @@ public class TroubleshootServlet extends AbstractWebConsolePlugin {
 
     private void handleBundles(HttpServletRequest req, HttpServletResponse res, Bundle[] bundles) throws IOException {
         PrintWriter out = res.getWriter();
+
+        out.println("<p class=\"statline ui-state-highlight\">");
+        out.println(getBundleStatusLine(bundles));
+        out.println("</p>");
 
         final List<Bundle> problematicBundles = getProblematicBundles(bundles);
 
@@ -345,7 +348,7 @@ public class TroubleshootServlet extends AbstractWebConsolePlugin {
         }
     }
 
-    private String getStatusLine(final Bundle[] bundles)
+    private String getBundleStatusLine(final Bundle[] bundles)
     {
         int active = 0, installed = 0, resolved = 0, fragments = 0;
         for (Bundle bundle : bundles) {
@@ -418,13 +421,26 @@ public class TroubleshootServlet extends AbstractWebConsolePlugin {
     private void handleServices(HttpServletRequest req, HttpServletResponse res) throws IOException {
         PrintWriter out = res.getWriter();
 
+        final Collection<ComponentDescriptionDTO> allComponents = scr.getComponentDescriptionDTOs();
+
+        ServiceReference<?>[] allServiceReferences = null;
+        try {
+            allServiceReferences = getBundleContext().getAllServiceReferences(null, null);
+        } catch (InvalidSyntaxException ignore) {
+            // filter is null
+        }
+
+        out.println("<p class=\"statline ui-state-highlight\">");
+        out.println(getServiceStatusLine(allComponents, allServiceReferences));
+        out.println("</p>");
+
         out.println("<b>Inactive Components</b>");
         out.println("<div>");
 
         // service interface name -> components implementing it
         Map<String, List<ComponentDescriptionDTO>> serviceImpls = new HashMap<String, List<ComponentDescriptionDTO>>();
 
-        Iterator allComponentDescriptions = scr.getComponentDescriptionDTOs(new Bundle[0]).iterator();
+        Iterator allComponentDescriptions = allComponents.iterator();
         while (allComponentDescriptions.hasNext()) {
             ComponentDescriptionDTO description = (ComponentDescriptionDTO) allComponentDescriptions.next();
             for (int i = 0; i < description.serviceInterfaces.length; i++) {
@@ -437,7 +453,7 @@ public class TroubleshootServlet extends AbstractWebConsolePlugin {
         Map<String, List<ComponentDescriptionDTO>> missingServices = new HashMap<String, List<ComponentDescriptionDTO>>();
         Set<String> servicesAlreadyChecked = new HashSet<String>();
 
-        allComponentDescriptions = scr.getComponentDescriptionDTOs(new Bundle[0]).iterator();
+        allComponentDescriptions = allComponents.iterator();
         while (allComponentDescriptions.hasNext()) {
             ComponentDescriptionDTO description = (ComponentDescriptionDTO) allComponentDescriptions.next();
 
@@ -474,6 +490,41 @@ public class TroubleshootServlet extends AbstractWebConsolePlugin {
         }
 
         out.println("</div>");
+    }
+
+    private String getServiceStatusLine(Collection<ComponentDescriptionDTO> allComponents,
+                                        ServiceReference<?>[] allServiceReferences) {
+        final StringBuilder builder = new StringBuilder();
+        builder.append("Component information: ");
+        builder.append(allComponents.size());
+        builder.append(" different components, ");
+        long componentsWithActiveInstances = 0;
+        long totalInstances = 0;
+        long factories = 0;
+        long totalFactoryInstances = 0;
+        for (ComponentDescriptionDTO component : allComponents) {
+            int count = scr.getComponentConfigurationDTOs(component).size();
+            if (count > 0) {
+                componentsWithActiveInstances += 1;
+            }
+            totalInstances += count;
+            if (component.factory != null) {
+                factories += 1;
+                totalFactoryInstances += count;
+            }
+        }
+        builder.append(componentsWithActiveInstances);
+        builder.append(" active components, ");
+        builder.append(totalInstances);
+        builder.append(" active instances, ");
+        builder.append(factories);
+        builder.append(" factory components, ");
+        // is always 0 ???
+//        builder.append(totalFactoryInstances);
+//        builder.append(" total factory instances, ");
+        builder.append(allServiceReferences.length);
+        builder.append(" service references");
+        return builder.toString();
     }
 
     private void collectMissingServices(
