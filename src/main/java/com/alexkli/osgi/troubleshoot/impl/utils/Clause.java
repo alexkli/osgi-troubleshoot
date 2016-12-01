@@ -16,7 +16,7 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package com.alexkli.osgi.troubleshoot.utils;
+package com.alexkli.osgi.troubleshoot.impl.utils;
 
 public class Clause
 {

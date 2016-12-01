@@ -16,7 +16,7 @@
  *
  *************************************************************************/
 
-package com.alexkli.osgi.troubleshoot;
+package com.alexkli.osgi.troubleshoot.impl;
 
 import java.util.Collections;
 import java.util.HashSet;

@@ -16,15 +16,15 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package com.alexkli.osgi.troubleshoot.utils;
+package com.alexkli.osgi.troubleshoot.impl.utils;
 
-public class Directive
+public class Attribute
 {
 
     private final String name;
     private final String value;
 
-    public Directive(String name, String value)
+    public Attribute(String name, String value)
     {
         this.name = name;
         this.value = value;
