@@ -19,7 +19,9 @@
 package com.alexkli.osgi.troubleshoot.impl;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.PrintWriter;
+import java.net.URL;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -36,6 +38,8 @@ import javax.servlet.ServletException;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 
+import org.apache.commons.io.IOUtils;
+import org.apache.commons.io.LineIterator;
 import org.apache.felix.scr.annotations.Activate;
 import org.apache.felix.scr.annotations.Component;
 import org.apache.felix.scr.annotations.Deactivate;
@@ -43,10 +47,12 @@ import org.apache.felix.scr.annotations.Properties;
 import org.apache.felix.scr.annotations.Property;
 import org.apache.felix.scr.annotations.Reference;
 import org.apache.felix.scr.annotations.Service;
-import org.apache.felix.webconsole.AbstractWebConsolePlugin;
+import org.apache.felix.webconsole.SimpleWebConsolePlugin;
 import org.apache.felix.webconsole.WebConsoleConstants;
+import org.apache.felix.webconsole.WebConsoleUtil;
 import org.osgi.framework.Bundle;
 import org.osgi.framework.BundleContext;
+import org.osgi.framework.BundleException;
 import org.osgi.framework.Constants;
 import org.osgi.framework.InvalidSyntaxException;
 import org.osgi.framework.ServiceReference;
@@ -76,7 +82,7 @@ import com.alexkli.osgi.troubleshoot.impl.utils.Parser;
     @Property(name=WebConsoleConstants.PLUGIN_CATEGORY, value=TroubleshootServlet.CATEGORY)
 })
 @SuppressWarnings("serial")
-public class TroubleshootServlet extends AbstractWebConsolePlugin {
+public class TroubleshootServlet extends SimpleWebConsolePlugin {
 
     public static final String LABEL = "troubleshoot";
     public static final String TITLE = "Troubleshoot";
@@ -89,6 +95,10 @@ public class TroubleshootServlet extends AbstractWebConsolePlugin {
     private ServiceComponentRuntime scr;
 
     private ServiceOriginTracker serviceOriginTracker;
+
+    public TroubleshootServlet() {
+        super(LABEL, TITLE, CATEGORY, null);
+    }
 
     @Activate
     public void componentActivate(ComponentContext ctx) {
@@ -105,62 +115,139 @@ public class TroubleshootServlet extends AbstractWebConsolePlugin {
         deactivate();
     }
 
-    @Override
-    public String getLabel() {
-        return LABEL;
-    }
-
-    @Override
-    public String getTitle() {
-        return TITLE;
-    }
-
-    @Override
-    public String getCategory() {
-        return CATEGORY;
-    }
+    // ----------------------------------------------< main view >---------------------------------
 
     @Override
     protected void renderContent(HttpServletRequest req, HttpServletResponse res) throws ServletException, IOException {
         PrintWriter out = res.getWriter();
 
-        out.println("<script>$(window).load(function(){\n" +
-            "    $('.toggle').click(function(e){\n" +
-            "        $(this).find('.toggle-content').toggle();\n" +
-            "    });\n" +
-            "});</script>");
+        embedStyle(out, "css/troubleshoot.css");
+        embedScript(out, "js/troubleshoot.js");
 
         final Bundle[] bundles = getBundleContext().getBundles();
 
         handleBundles(req, res, bundles);
 
-        out.println("<br>");
-        out.println("<br>");
-        out.println("<br>");
-
         handleServices(req, res);
     }
 
-    // -----------------------------------< bundles >----------
+    // ----------------------------------------------< actions >---------------------------------
 
-    private void handleBundles(HttpServletRequest req, HttpServletResponse res, Bundle[] bundles) throws IOException {
-        PrintWriter out = res.getWriter();
+    @Override
+    protected void doPost(HttpServletRequest request, HttpServletResponse response) throws ServletException, IOException {
+        final String action = WebConsoleUtil.getParameter( request, "action" );
+        if ("startInactiveBundles".equals(action)) {
+            startActionResponse(request, response);
 
-        out.println("<p class=\"statline ui-state-highlight\">");
+            PrintWriter out = response.getWriter();
+            int bundlesTouched = 0;
+            int bundlesActive = 0;
+
+            final Bundle[] bundles = getBundleContext().getBundles();
+            for (Bundle bundle : bundles) {
+                if (isFragmentBundle(bundle)) {
+                    continue;
+                }
+                if (bundle.getState() == Bundle.RESOLVED || bundle.getState() == Bundle.INSTALLED) {
+                    bundlesTouched++;
+
+                    try {
+                        out.printf("Trying to start %s (%s)... ", bundle.getSymbolicName(), getStatusString(bundle));
+                        response.flushBuffer();
+
+                        bundle.start(Bundle.START_TRANSIENT);
+
+                        bundlesActive += 1;
+
+                        out.printf("<span class='log-ok'>OK: %s.</span>", getStatusString(bundle));
+
+                    } catch (BundleException e) {
+                        out.printf("<span class='ui-state-error-text'>Failed:</span> %s", e.getMessage());
+                    } catch (IllegalStateException e) {
+                        out.printf("<span class='ui-state-error-text'>Failed, state changed:</span> %s", e.getMessage());
+                    } catch (SecurityException e) {
+                        out.printf("<span class='ui-state-error-text'>Denied:</span> %s", e.getMessage());
+                    }
+
+                    out.println("<br/>");
+                    insertScrollScript(out);
+                    response.flushBuffer();
+                }
+            }
+
+            out.println("<br/>");
+            if (bundlesTouched == 0) {
+                out.println("<span class='log-end'>No installed or resolved bundles found</span><br/>");
+            } else {
+                out.printf("<span class='log-end'>Successfully started %s out of %s bundles.</span><br/>", bundlesActive, bundlesTouched);
+            }
+
+            insertScrollScript(out);
+            endActionResponse(response);
+        }
+    }
+
+    private void startActionResponse(HttpServletRequest request, HttpServletResponse response) throws IOException {
+        response.setContentType("text/html");
+        response.setCharacterEncoding("UTF-8");
+
+        PrintWriter out = response.getWriter();
+        out.println("<head>");
+        String appRoot = (String) request.getAttribute( WebConsoleConstants.ATTR_APP_ROOT );
+        includeCSS(out, appRoot + "/res/lib/reset-min.css");
+        includeCSS(out, appRoot + "/res/lib/themes/base/jquery-ui.css");
+        includeCSS(out, appRoot + getBrandingPlugin().getMainStyleSheet());
+        embedStyle(out, "css/action.css");
+        embedScript(out, "js/action.js");
+        out.println("</head>");
+
+        out.println("<body class='ui-widget'>");
+
+        // add padding to force immediate flushing (response.flushBuffer() alone isn't enough at the start)
+        for (int i = 0; i < 100; i++) {
+            out.print(" ");
+        }
+    }
+
+    private void endActionResponse(HttpServletResponse response) throws IOException {
+        PrintWriter out = response.getWriter();
+        out.println("</body>");
+    }
+
+    private void insertScrollScript(PrintWriter out) {
+        embedScript(out, "js/action-scroll.js");
+    }
+
+    // ----------------------------------------------< bundles >---------------------------------
+
+    private void handleBundles(HttpServletRequest request, HttpServletResponse response, Bundle[] bundles) throws IOException {
+        PrintWriter out = response.getWriter();
+
+        out.println("<h2>Bundles</h2>");
+
+        out.println("<p class='statline ui-state-highlight'>");
         out.println(getBundleStatusLine(bundles));
         out.println("</p>");
 
         final List<Bundle> problematicBundles = getProblematicBundles(bundles);
 
         if (problematicBundles.isEmpty()) {
-            out.println("All bundles ok.");
+            out.println("<div class='all-ok'>All bundles ok.</div>");
             return;
         }
 
-        out.println("<b>Inactive Bundles</b>");
+        // button + dialog for starting all bundles
+        out.println("<form class='startInactiveBundles' method='post' target='actionLog'>");
+        out.println("    <input type='hidden' name='action' value='startInactiveBundles' />");
+        out.println("    <button type='submit'>Start inactive bundles</button>");
+        out.println("</form>");
+        out.println("<div id='actionLogDialog' style='display:none'>");
+        out.println("   <iframe id='actionLog' name='actionLog' width='100%' height='100%' frameborder='0' marginwidth='0' marginheight='0'></iframe>");
+        out.println("</div>");
+
         out.println("<div>");
 
-        final String bundlesUrl = req.getAttribute(WebConsoleConstants.ATTR_APP_ROOT) + "/bundles";
+        final String bundlesUrl = request.getAttribute(WebConsoleConstants.ATTR_APP_ROOT) + "/bundles";
 
         for (Bundle bundle : problematicBundles) {
             out.println(getDetailLink(bundle, bundlesUrl));
@@ -169,10 +256,10 @@ public class TroubleshootServlet extends AbstractWebConsolePlugin {
             out.println("<br>");
 
             if (bundle.getState() == Bundle.STOPPING || bundle.getState() == Bundle.STARTING) {
-                out.print("<i>If the bundle is ");
+                out.print("<span class='hint'>If the bundle is ");
                 out.print(bundle.getState() == Bundle.STOPPING ? "stopping" : "starting");
                 out.println(" forever, there might be a deadlock." +
-                    " Check the <a href='status-jstack-threaddump'>thread dumps</a>.</i><br/>");
+                    " Check the <a href='status-jstack-threaddump'>thread dumps</a>.</span><br/>");
             }
 
             ExportedPackage[] allExports = packageAdmin.getExportedPackages((Bundle) null);
@@ -232,7 +319,7 @@ public class TroubleshootServlet extends AbstractWebConsolePlugin {
                         }
                         if (!satisfied) {
                             // here we have export candidates, but in a different version
-                            out.print("<span class=\"ui-state-error-text\">");
+                            out.print("<span class='ui-state-error-text'>");
 
                             String prefix = "";
                             if (matchingExports.size() > 1) {
@@ -272,7 +359,7 @@ public class TroubleshootServlet extends AbstractWebConsolePlugin {
                         }
                     } else {
                         // not found at all, bundle missing
-                        out.print("<span class=\"ui-state-error-text\">");
+                        out.print("<span class='ui-state-error-text'>");
                         out.print("- not exported by any bundle: ");
                         out.println(name);
                         out.print("</span>");
@@ -417,13 +504,15 @@ public class TroubleshootServlet extends AbstractWebConsolePlugin {
             }
             if ( resolved != 0 )
             {
-                buffer.append(", ");
+                buffer.append(", <span class='ui-state-error-text'>");
                 appendBundleInfoCount(buffer, "resolved", resolved);
+                buffer.append("</span>");
             }
             if ( installed != 0 )
             {
-                buffer.append(", ");
+                buffer.append(", <span class='ui-state-error-text'>");
                 appendBundleInfoCount(buffer, "installed", installed);
+                buffer.append("</span>");
             }
             buffer.append('.');
         }
@@ -443,7 +532,7 @@ public class TroubleshootServlet extends AbstractWebConsolePlugin {
         return packageAdmin;
     }
 
-    // -----------------------------------< services / components >----------
+    // ----------------------------------------------< services / components >---------------------------------
 
     private void handleServices(HttpServletRequest req, HttpServletResponse res) throws IOException {
         PrintWriter out = res.getWriter();
@@ -457,11 +546,11 @@ public class TroubleshootServlet extends AbstractWebConsolePlugin {
             // filter is null
         }
 
-        out.println("<p class=\"statline ui-state-highlight\">");
+        out.println("<h2>Components</h2>");
+        out.println("<p class='statline ui-state-highlight'>");
         out.println(getServiceStatusLine(allComponents, allServiceReferences));
         out.println("</p>");
 
-        out.println("<b>Inactive Components</b>");
         out.println("<div>");
 
         // service interface name -> components implementing it
@@ -505,7 +594,7 @@ public class TroubleshootServlet extends AbstractWebConsolePlugin {
                 }
             });
             out.println("<div class='toggle'>");
-            out.println("<div class='ui-icon ui-icon-triangle-1-e' style='float: left'></div>");
+            out.println("<div class='ui-icon ui-icon-triangle-1-e'></div>");
             out.print("missing service: ");
             out.print(entry.getKey());
             out.print(" blocks ");
@@ -514,7 +603,7 @@ public class TroubleshootServlet extends AbstractWebConsolePlugin {
             out.println("<br>");
             out.println("<div class='toggle-content' style='display:none'>");
             for (ComponentDescriptionDTO dependent : dependents) {
-                out.print("<p style='margin-left:30px'>");
+                out.print("<p>");
                 out.print(dependent.name);
                 out.println("</p>");
             }
@@ -525,9 +614,7 @@ public class TroubleshootServlet extends AbstractWebConsolePlugin {
 
         out.println("</div>");
 
-        out.println("<b>Origins</b>");
-
-
+//        out.println("<h2>Origins</h2>");
     }
 
     private String getServiceStatusLine(Collection<ComponentDescriptionDTO> allComponents,
@@ -611,5 +698,63 @@ public class TroubleshootServlet extends AbstractWebConsolePlugin {
             }
         }
         return null;
+    }
+
+    // ----------------------------------------------< html helper >---------------------------------
+
+    private void includeCSS(PrintWriter out, String path) {
+        out.print("<link href='");
+        out.print(path);
+        out.println("' rel='stylesheet' type='text/css' />");
+    }
+
+    private void embedScript(PrintWriter out, String path) {
+        out.println("<script type='text/javascript'>");
+        out.print("// ");
+        out.println(path);
+        includeResource(out, path);
+        out.println("</script>");
+    }
+
+    private void embedStyle(PrintWriter out, String path) {
+        out.println("<style>");
+        out.print("/* ");
+        out.print(path);
+        out.println(" */");
+        includeResource(out, path);
+        out.println("</style>");
+    }
+
+    private void includeResource(PrintWriter out, String path) {
+        try {
+            if (!path.startsWith("/")) {
+                path = "/" + path;
+            }
+            URL url = getClass().getResource(path);
+            if (url == null) {
+                // not found`
+                return;
+            }
+            InputStream ins = url.openConnection().getInputStream();
+            LineIterator lineIterator = IOUtils.lineIterator(ins, "UTF-8");
+
+            boolean startComment = true;
+            while (lineIterator.hasNext()) {
+                String line = lineIterator.nextLine();
+                if (startComment) {
+                    String trimmed = line.trim();
+                    if (!trimmed.isEmpty()
+                        && !trimmed.startsWith("/**")
+                        && !trimmed.startsWith("*")) {
+                        startComment = false;
+                    }
+                }
+                if (!startComment) {
+                    out.println(line);
+                }
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
     }
 }
