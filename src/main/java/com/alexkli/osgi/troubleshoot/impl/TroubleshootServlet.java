@@ -28,11 +28,9 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.Dictionary;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import javax.servlet.Servlet;
 import javax.servlet.ServletException;
 import javax.servlet.http.HttpServletRequest;
@@ -66,6 +64,8 @@ import org.osgi.service.component.runtime.dto.ReferenceDTO;
 import org.osgi.service.component.runtime.dto.SatisfiedReferenceDTO;
 import org.osgi.service.packageadmin.ExportedPackage;
 import org.osgi.service.packageadmin.PackageAdmin;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import com.alexkli.osgi.troubleshoot.impl.utils.Clause;
 import com.alexkli.osgi.troubleshoot.impl.utils.Parser;
@@ -87,6 +87,8 @@ public class TroubleshootServlet extends SimpleWebConsolePlugin {
     public static final String LABEL = "troubleshoot";
     public static final String TITLE = "Troubleshoot";
     public static final String CATEGORY = "OSGi";
+
+    private final Logger log = LoggerFactory.getLogger(getClass());
 
     @Reference
     private PackageAdmin packageAdmin;
@@ -554,26 +556,18 @@ public class TroubleshootServlet extends SimpleWebConsolePlugin {
         out.println("<div>");
 
         // service interface name -> components implementing it
-        Map<String, List<ComponentDescriptionDTO>> serviceImpls = new HashMap<String, List<ComponentDescriptionDTO>>();
-
-        Iterator allComponentDescriptions = allComponents.iterator();
-        while (allComponentDescriptions.hasNext()) {
-            ComponentDescriptionDTO description = (ComponentDescriptionDTO) allComponentDescriptions.next();
-            for (int i = 0; i < description.serviceInterfaces.length; i++) {
-
-                addToMultiMap(serviceImpls, description.serviceInterfaces[i], description);
-            }
-        }
+        Map<String, List<ComponentDescriptionDTO>> serviceImpls = getAvailableServiceImplementations(allComponents);
+        Map<String, List<ComponentDescriptionDTO>> componentsByName = getAvailableComponentsByName(allComponents);
 
         // service interface name -> components blocked by it
         Map<String, List<ComponentDescriptionDTO>> missingServices = new HashMap<String, List<ComponentDescriptionDTO>>();
-        Set<String> servicesAlreadyChecked = new HashSet<String>();
 
-        allComponentDescriptions = allComponents.iterator();
+        // find all components that fail to start due to missing service dependencies, group by missing service
+        Iterator allComponentDescriptions = allComponents.iterator();
         while (allComponentDescriptions.hasNext()) {
             ComponentDescriptionDTO description = (ComponentDescriptionDTO) allComponentDescriptions.next();
 
-            collectMissingServices(description, scr, serviceImpls, missingServices, servicesAlreadyChecked);
+            collectMissingServices(description, scr, serviceImpls, componentsByName, missingServices);
         }
 
         // sort by most blocked components first
@@ -652,29 +646,78 @@ public class TroubleshootServlet extends SimpleWebConsolePlugin {
         return builder.toString();
     }
 
+    /** Returns a map from service interface name to all active component implementations that provide this interface */
+    private Map<String, List<ComponentDescriptionDTO>> getAvailableServiceImplementations(Iterable<ComponentDescriptionDTO> allComponents) {
+        Map<String, List<ComponentDescriptionDTO>> serviceImpls = new HashMap<String, List<ComponentDescriptionDTO>>();
+
+        Iterator allComponentDescriptions = allComponents.iterator();
+        while (allComponentDescriptions.hasNext()) {
+            ComponentDescriptionDTO description = (ComponentDescriptionDTO) allComponentDescriptions.next();
+//            log.info(description.name);
+//            if (description.name.contains("SharedS3DataStore")) {
+//                log.info(">>>>>>>>>>>>>> name = {}", description.name);
+//                log.info(">>>>>>>>>>>>>> immediate = {}", description.immediate);
+//                log.info(">>>>>>>>>>>>>> implementationClass = {}", description.implementationClass);
+//                log.info(">>>>>>>>>>>>>> factory = {}", description.factory);
+//                log.info(">>>>>>>>>>>>>> serviceInterfaces = {}", description.serviceInterfaces);
+//                log.info(">>>>>>>>>>>>>> configurationPid = {}", description.configurationPid);
+//                log.info(">>>>>>>>>>>>>> configurationPolicy = {}", description.configurationPolicy);
+//            }
+            for (String serviceInterface : description.serviceInterfaces) {
+                addToMultiMap(serviceImpls, serviceInterface, description);
+            }
+        }
+        return serviceImpls;
+    }
+
+    private Map<String, List<ComponentDescriptionDTO>> getAvailableComponentsByName(Iterable<ComponentDescriptionDTO> allComponents) {
+        Map<String, List<ComponentDescriptionDTO>> serviceImpls = new HashMap<String, List<ComponentDescriptionDTO>>();
+
+        Iterator allComponentDescriptions = allComponents.iterator();
+        while (allComponentDescriptions.hasNext()) {
+            ComponentDescriptionDTO description = (ComponentDescriptionDTO) allComponentDescriptions.next();
+            addToMultiMap(serviceImpls, description.name, description);
+        }
+        return serviceImpls;
+    }
+
+    /** collect missing services for instances of this component description */
     private void collectMissingServices(
         ComponentDescriptionDTO description,
         ServiceComponentRuntime scr,
         Map<String, List<ComponentDescriptionDTO>> serviceImpls,
-        Map<String, List<ComponentDescriptionDTO>> missingServices,
-        Set<String> servicesAlreadyChecked
-    ) {
+        Map<String, List<ComponentDescriptionDTO>> componentsByName,
+        Map<String, List<ComponentDescriptionDTO>> missingServices) {
         Iterator components = scr.getComponentConfigurationDTOs(description).iterator();
 
         // first instance is enough
         if (components.hasNext()) {
             ComponentConfigurationDTO component = (ComponentConfigurationDTO) components.next();
+//            if (description.name.contains("SalesforceExportProcess")) {
+//                log.info("################ name = {}", description.name);
+//                log.info("################ state = {}", component.state);
+//            }
 
             for (int i = 0; i < component.description.references.length; i++) {
                 ReferenceDTO reference = component.description.references[i];
                 SatisfiedReferenceDTO satisfiedRef = getSatisfiedReferenceDTO(component, reference.name);
                 if (satisfiedRef == null) {
                     String serviceInterface = reference.interfaceName;
-                    servicesAlreadyChecked.add(serviceInterface);
 
-                    List impls = (List) serviceImpls.get(serviceInterface);
+                    List impls = serviceImpls.get(serviceInterface);
                     if (impls == null) {
-                        addToMultiMap(missingServices, serviceInterface, description);
+                        List<ComponentDescriptionDTO> missingComponents = componentsByName.get(serviceInterface);
+                        String problem = "no component instance active";
+                        if (missingComponents == null || missingComponents.isEmpty()) {
+                            // component not even defined (e.g. bundle missing)
+                            problem = "no component definition in active bundles found";
+                        } else {
+                            ComponentDescriptionDTO missingComponentDesc = missingComponents.get(0);
+                            if ("require".equals(missingComponentDesc.configurationPolicy)) {
+                                problem = "missing required config";
+                            }
+                        }
+                        addToMultiMap(missingServices, serviceInterface + " (" + problem + ")", description);
                     }
                 }
             }
